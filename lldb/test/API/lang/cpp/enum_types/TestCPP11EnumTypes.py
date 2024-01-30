@@ -51,3 +51,32 @@ class CPP11EnumTypesTestCase(TestBase):
         self.check_enum("l")
         self.check_enum("ull")
         self.check_enum("ll")
+
+        self.expect_expr("eFoo", result_type="MyEnum", result_value="eFoo")
+        self.expect_expr("MyEnum::eFoo", result_type="MyEnum", result_value="eFoo")
+        self.expect_expr("my_enum + eFoo + MyEnum::eFoo", result_value="3")
+
+        self.expect("p eBar", error=True,
+                    substrs=["use of undeclared identifier 'eBar'"])
+
+    @skipIf(dwarf_version=['<', '4'])
+    def test_enums_from_different_scopes(self):
+        self.build()
+        _ = self.dbg.CreateTarget(self.getBuildArtifact())
+
+        lldbutil.run_break_set_by_source_regexp(
+            self, "// break here", num_expected_locations=3)
+
+        # Break in A::g()
+        self.runCmd("run")
+        self.expect_expr("eValue", result_type="A::AEnum", result_value="eValue")
+
+        # Break in B::f()
+        self.runCmd("continue")
+        self.expect_expr("eValue", result_type="B::BEnum", result_value="eValue")
+
+        # Break in main()
+        self.runCmd("continue")
+        self.expect_expr("eValue", result_type="CEnum", result_value="eValue")
+
+        self.runCmd("kill")

@@ -3750,9 +3750,9 @@ public:
 };
 
 // TargetProperties
+
 #define LLDB_PROPERTIES_target_experimental
 #include "TargetProperties.inc"
-
 enum {
 #define LLDB_PROPERTIES_target_experimental
 #include "TargetPropertiesEnum.inc"
@@ -3867,7 +3867,29 @@ void TargetProperties::SetInjectLocalVariables(ExecutionContext *exe_ctx,
       exp_property->GetValue()->GetAsProperties();
   if (exp_values)
     exp_values->SetPropertyAtIndexAsBoolean(exe_ctx, ePropertyInjectLocalVars,
-                                            true);
+                                            b);
+}
+
+bool TargetProperties::GetInferClassTemplates() const {
+  const Property *exp_property = m_collection_sp->GetPropertyAtIndex(
+      nullptr, false, ePropertyExperimental);
+  OptionValueProperties *exp_values =
+      exp_property->GetValue()->GetAsProperties();
+  if (exp_values)
+    return exp_values->GetPropertyAtIndexAsBoolean(
+        nullptr, ePropertyInferClassTemplates, true);
+  else
+    return true;
+}
+
+void TargetProperties::SetInferClassTemplates(bool b) {
+  const Property *exp_property = m_collection_sp->GetPropertyAtIndex(
+      nullptr, false, ePropertyExperimental);
+  OptionValueProperties *exp_values =
+      exp_property->GetValue()->GetAsProperties();
+  if (exp_values)
+    exp_values->SetPropertyAtIndexAsBoolean(nullptr,
+                                            ePropertyInferClassTemplates, b);
 }
 
 ArchSpec TargetProperties::GetDefaultArchitecture() const {

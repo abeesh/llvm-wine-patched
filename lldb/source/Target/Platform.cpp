@@ -1695,7 +1695,12 @@ Status Platform::DownloadModuleSlice(const FileSpec &src_file_spec,
     return error;
   }
 
-  std::vector<char> buffer(1024);
+  // TODO: Temporarily increase the read buffer. Since all reads
+  // are done in series, the network overhead for sending thousands of small
+  // request adds up. By increasing the read buffer there is a 10x improvement
+  // in transfer speed for a 16MB file.  This change is temporary as we should
+  // try to fix this properly upstream.
+  std::vector<char> buffer(1024 * 100);
   auto offset = src_offset;
   uint64_t total_bytes_read = 0;
   while (total_bytes_read < src_size) {

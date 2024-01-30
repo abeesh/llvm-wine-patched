@@ -604,7 +604,9 @@ void Thread::SelectMostRelevantFrame() {
 void Thread::WillStop() {
   ThreadPlan *current_plan = GetCurrentPlan();
 
-  SelectMostRelevantFrame();
+  lldb::StopReason stop_reason = GetStopReason();
+  if (stop_reason != lldb::StopReason::eStopReasonNone)
+    SelectMostRelevantFrame();
 
   // FIXME: I may decide to disallow threads with no plans.  In which
   // case this should go to an assert.

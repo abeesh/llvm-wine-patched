@@ -8,7 +8,12 @@ struct foo
   uint32_t  second_val;
   uint64_t  third_val;
 };
-  
+
+struct bar
+{
+  int value;
+};
+
 int main ()
 {
   int val = 100;
@@ -17,6 +22,16 @@ int main ()
   ptr->first_val = 66;
   ptr->second_val = 6666;
   ptr->third_val = 66666666;
+
+  struct bar _b1 = {.value = 1};
+  struct bar _b2 = {.value = 2};
+  struct bar *b1 = &_b1;
+  struct bar *b2 = &_b2;
+
+  int _arr1[] = {1, 2};
+  int _arr2[] = {3, 4};
+  int* arr1 = _arr1;
+  int* arr2 = _arr2;
 
   // Stop here and set values
   printf ("Val - %d Mine - %d, %d, %llu. Ptr - %d, %d, %llu\n", val, 

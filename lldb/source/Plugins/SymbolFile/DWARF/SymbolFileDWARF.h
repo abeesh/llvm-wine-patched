@@ -196,7 +196,7 @@ public:
             const lldb_private::CompilerDeclContext &parent_decl_ctx,
             uint32_t max_matches,
             llvm::DenseSet<lldb_private::SymbolFile *> &searched_symbol_files,
-            lldb_private::TypeMap &types) override;
+            lldb_private::TypeMap &types, bool include_templates) override;
 
   void FindTypes(llvm::ArrayRef<lldb_private::CompilerContext> pattern,
                  lldb_private::LanguageSet languages,
@@ -383,6 +383,10 @@ protected:
                                      bool assert_not_being_parsed);
 
   lldb_private::Type *ResolveTypeUID(const DIERef &die_ref);
+
+  lldb::VariableSP
+  ParseStaticConstMemberDIE(const lldb_private::SymbolContext &sc,
+                            const DWARFDIE &die);
 
   lldb::VariableSP ParseVariableDIE(const lldb_private::SymbolContext &sc,
                                     const DWARFDIE &die,

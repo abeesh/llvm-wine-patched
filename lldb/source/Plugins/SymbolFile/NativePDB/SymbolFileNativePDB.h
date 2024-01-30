@@ -141,7 +141,7 @@ public:
   void FindTypes(ConstString name, const CompilerDeclContext &parent_decl_ctx,
                  uint32_t max_matches,
                  llvm::DenseSet<SymbolFile *> &searched_symbol_files,
-                 TypeMap &types) override;
+                 TypeMap &types, bool include_templates) override;
 
   void FindTypes(llvm::ArrayRef<CompilerContext> pattern, LanguageSet languages,
                  llvm::DenseSet<SymbolFile *> &searched_symbol_files,

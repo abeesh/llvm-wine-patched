@@ -68,6 +68,9 @@ public:
 
   ArchSpec GetArchitecture();
 
+  ArchSpec GetModuleArchitecture(llvm::StringRef file_name,
+                                 const minidump::Module *module);
+
   const MinidumpMiscInfo *GetMiscInfo();
 
   llvm::Optional<LinuxProcStatus> GetLinuxProcStatus();

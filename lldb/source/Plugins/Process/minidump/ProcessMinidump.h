@@ -75,6 +75,9 @@ public:
 
   ArchSpec GetArchitecture();
 
+  ArchSpec GetModuleArchitecture(llvm::StringRef file_name,
+                                 const minidump::Module *module);
+
   Status GetMemoryRegions(
       lldb_private::MemoryRegionInfos &region_list) override;
 

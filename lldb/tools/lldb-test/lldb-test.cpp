@@ -540,7 +540,7 @@ Error opts::symbols::findTypes(lldb_private::Module &Module) {
   TypeMap Map;
   if (!Name.empty())
     Symfile.FindTypes(ConstString(Name), ContextPtr, UINT32_MAX, SearchedFiles,
-                      Map);
+                      Map, false);
   else
     Module.FindTypes(parseCompilerContext(), languages, SearchedFiles, Map);
 

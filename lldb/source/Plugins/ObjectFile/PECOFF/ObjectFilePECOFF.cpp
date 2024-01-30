@@ -681,7 +681,9 @@ void ObjectFilePECOFF::ParseSymtab(Symtab &symtab) {
     lldb::offset_t name_ordinal_offset =
         export_table.address_of_name_ordinals - data_start;
 
-    Symbol *symbols = symtab.Resize(export_table.number_of_names);
+    size_t first_export_symbol = m_symtab_up->GetNumSymbols();
+    Symbol *symbols = m_symtab_up->Resize(first_export_symbol +
+                                          export_table.number_of_names);
 
     std::string symbol_name;
 
@@ -702,10 +704,11 @@ void ObjectFilePECOFF::ParseSymtab(Symtab &symtab) {
 
       Address symbol_addr(m_coff_header_opt.image_base + function_rva,
                           sect_list);
-      symbols[i].GetMangled().SetValue(ConstString(symbol_name.c_str()));
-      symbols[i].GetAddressRef() = symbol_addr;
-      symbols[i].SetType(lldb::eSymbolTypeCode);
-      symbols[i].SetDebug(true);
+      Symbol &symbol = symbols[first_export_symbol + i];
+      symbol.GetMangled().SetValue(ConstString(symbol_name.c_str()));
+      symbol.GetAddressRef() = symbol_addr;
+      symbol.SetType(lldb::eSymbolTypeCode);
+      symbol.SetDebug(true);
     }
   }
 }

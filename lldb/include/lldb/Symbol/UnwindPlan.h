@@ -430,7 +430,8 @@ public:
   // unknown - the final row in the UnwindPlan is returned. In practice, the
   // UnwindPlan for a function with no known start address will be the
   // architectural default UnwindPlan which will only have one row.
-  UnwindPlan::RowSP GetRowForFunctionOffset(int offset) const;
+  UnwindPlan::RowSP GetRowForFunctionOffset(int offset,
+                                            Address start_address = {}) const;
 
   lldb::RegisterKind GetRegisterKind() const { return m_register_kind; }
 

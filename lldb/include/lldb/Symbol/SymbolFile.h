@@ -232,7 +232,7 @@ public:
   FindTypes(ConstString name, const CompilerDeclContext &parent_decl_ctx,
             uint32_t max_matches,
             llvm::DenseSet<lldb_private::SymbolFile *> &searched_symbol_files,
-            TypeMap &types);
+            TypeMap &types, bool include_templates);
 
   /// Find types specified by a CompilerContextPattern.
   /// \param languages

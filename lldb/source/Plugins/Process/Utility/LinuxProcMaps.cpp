@@ -96,12 +96,15 @@ ParseMemoryRegionInfoFromProcMapsLine(llvm::StringRef maps_line,
 
   line_extractor.GetChar();              // Read the private bit
   line_extractor.SkipSpaces();           // Skip the separator
-  line_extractor.GetHexMaxU64(false, 0); // Read the offset
+  lldb::offset_t file_offset =
+      line_extractor.GetHexMaxU64(false, 0); // Read the offset
   line_extractor.GetHexMaxU64(false, 0); // Read the major device number
   line_extractor.GetChar();              // Read the device id separator
   line_extractor.GetHexMaxU64(false, 0); // Read the major device number
   line_extractor.SkipSpaces();           // Skip the separator
   line_extractor.GetU64(0, 10);          // Read the inode number
+
+  region.SetFileOffset(file_offset);
 
   line_extractor.SkipSpaces();
   const char *name = line_extractor.Peek();

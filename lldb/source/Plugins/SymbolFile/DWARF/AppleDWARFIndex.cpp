@@ -170,6 +170,17 @@ void AppleDWARFIndex::GetTypes(
       DIERefCallback(callback, type_name.GetStringRef()));
 }
 
+void AppleDWARFIndex::GetGenericTypes(
+    ConstString name, llvm::function_ref<bool(DWARFDIE die)> callback) {
+  return;
+}
+
+void AppleDWARFIndex::GetGenericTypes(
+    const DWARFDeclContext &context,
+    llvm::function_ref<bool(DWARFDIE die)> callback) {
+  return;
+}
+
 void AppleDWARFIndex::GetNamespaces(
     ConstString name, llvm::function_ref<bool(DWARFDIE die)> callback) {
   if (!m_apple_namespaces_up)

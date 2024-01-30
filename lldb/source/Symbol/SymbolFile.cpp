@@ -131,7 +131,7 @@ void SymbolFile::FindTypes(
     ConstString name, const CompilerDeclContext &parent_decl_ctx,
     uint32_t max_matches,
     llvm::DenseSet<lldb_private::SymbolFile *> &searched_symbol_files,
-    TypeMap &types) {}
+    TypeMap &types, bool include_templates) {}
 
 void SymbolFile::FindTypes(llvm::ArrayRef<CompilerContext> pattern,
                            LanguageSet languages,

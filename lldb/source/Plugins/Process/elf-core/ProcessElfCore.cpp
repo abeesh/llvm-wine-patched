@@ -15,8 +15,11 @@
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Section.h"
+#include "lldb/Interpreter/OptionValueProperties.h"
+#include "lldb/Interpreter/Property.h"
 #include "lldb/Target/DynamicLoader.h"
 #include "lldb/Target/MemoryRegionInfo.h"
+#include "lldb/Target/SectionLoadList.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/UnixSignals.h"
 #include "lldb/Utility/DataBufferHeap.h"
@@ -32,10 +35,132 @@
 #include "ProcessElfCore.h"
 #include "ThreadElfCore.h"
 
+using namespace lldb;
 using namespace lldb_private;
 namespace ELF = llvm::ELF;
 
 LLDB_PLUGIN_DEFINE(ProcessElfCore)
+
+namespace {
+
+#define LLDB_PROPERTIES_elfcore
+#include "ProcessElfCoreProperties.inc"
+
+enum {
+#define LLDB_PROPERTIES_elfcore
+#include "ProcessElfCorePropertiesEnum.inc"
+};
+
+class PluginProperties : public Properties {
+public:
+  static ConstString &GetSettingName() {
+    static ConstString g_plugin_name(ProcessElfCore::GetPluginNameStatic());
+    return g_plugin_name;
+  }
+
+  PluginProperties() : Properties() {
+    m_collection_sp = std::make_shared<OptionValueProperties>(GetSettingName());
+    m_collection_sp->Initialize(g_elfcore_properties);
+  }
+
+  ~PluginProperties() override {}
+
+  bool GetLoadModulesFromCoreNote() const {
+    const uint32_t idx = ePropertyLoadModulesFromCoreNote;
+    return m_collection_sp->GetPropertyAtIndexAsBoolean(nullptr, idx, true);
+  }
+};
+
+typedef std::shared_ptr<PluginProperties> ProcessKDPPropertiesSP;
+
+static const ProcessKDPPropertiesSP &GetGlobalPluginProperties() {
+  static ProcessKDPPropertiesSP g_settings_sp;
+  if (!g_settings_sp)
+    g_settings_sp = std::make_shared<PluginProperties>();
+  return g_settings_sp;
+}
+
+// TODO This is a literal copy of the same class from
+// ProcessMinidump.cpp. We duplicate the code to make backmerging easier.
+
+/// A minimal ObjectFile implementation providing a dummy object file for the
+/// cases when the real module binary is not available. This allows the module
+/// to show up in "image list" and symbols to be added to it.
+class PlaceholderObjectFile : public ObjectFile {
+public:
+  PlaceholderObjectFile(const lldb::ModuleSP &module_sp,
+                        const ModuleSpec &module_spec, lldb::addr_t base,
+                        lldb::addr_t size)
+      : ObjectFile(module_sp, &module_spec.GetFileSpec(), /*file_offset*/ 0,
+                   /*length*/ 0, /*data_sp*/ nullptr, /*data_offset*/ 0),
+        m_arch(module_spec.GetArchitecture()), m_uuid(module_spec.GetUUID()),
+        m_base(base), m_size(size) {
+    m_symtab_up = std::make_unique<Symtab>(this);
+  }
+
+  static llvm::StringRef GetStaticPluginName() {
+    return "placeholder";
+  }
+  llvm::StringRef GetPluginName() override { return GetStaticPluginName(); }
+  bool ParseHeader() override { return true; }
+  Type CalculateType() override { return eTypeUnknown; }
+  Strata CalculateStrata() override { return eStrataUnknown; }
+  uint32_t GetDependentModules(FileSpecList &file_list) override { return 0; }
+  bool IsExecutable() const override { return false; }
+  ArchSpec GetArchitecture() override { return m_arch; }
+  UUID GetUUID() override { return m_uuid; }
+  void ParseSymtab(lldb_private::Symtab &symtab) override {}
+  bool IsStripped() override { return true; }
+  ByteOrder GetByteOrder() const override { return m_arch.GetByteOrder(); }
+
+  uint32_t GetAddressByteSize() const override {
+    return m_arch.GetAddressByteSize();
+  }
+
+  Address GetBaseAddress() override {
+    return Address(m_sections_up->GetSectionAtIndex(0), 0);
+  }
+
+  void CreateSections(SectionList &unified_section_list) override {
+    m_sections_up = std::make_unique<SectionList>();
+    auto section_sp = std::make_shared<Section>(
+        GetModule(), this, /*sect_id*/ 0, ConstString(".module_image"),
+        eSectionTypeOther, m_base, m_size, /*file_offset*/ 0, /*file_size*/ 0,
+        /*log2align*/ 0, /*flags*/ 0);
+    section_sp->SetPermissions(ePermissionsReadable | ePermissionsExecutable);
+    m_sections_up->AddSection(section_sp);
+    unified_section_list.AddSection(std::move(section_sp));
+  }
+
+  bool SetLoadAddress(Target &target, addr_t value,
+                      bool value_is_offset) override {
+    assert(!value_is_offset);
+    assert(value == m_base);
+
+    // Create sections if they haven't been created already.
+    GetModule()->GetSectionList();
+    assert(m_sections_up->GetNumSections(0) == 1);
+
+    target.GetSectionLoadList().SetSectionLoadAddress(
+        m_sections_up->GetSectionAtIndex(0), m_base);
+    return true;
+  }
+
+  void Dump(Stream *s) override {
+    s->Format("Placeholder object file for {0} loaded at [{1:x}-{2:x})\n",
+              GetFileSpec(), m_base, m_base + m_size);
+  }
+
+  lldb::addr_t GetBaseImageAddress() const { return m_base; }
+
+private:
+  ArchSpec m_arch;
+  UUID m_uuid;
+  lldb::addr_t m_base;
+  lldb::addr_t m_size;
+};
+
+} // namespace
 
 llvm::StringRef ProcessElfCore::GetPluginDescriptionStatic() {
   return "ELF core dump plug-in.";
@@ -142,6 +267,13 @@ lldb::addr_t ProcessElfCore::AddAddressRangeFromLoadSegment(
   return addr;
 }
 
+namespace {
+
+const char *const LLDB_NT_OWNER_GNU = "GNU";
+const elf::elf_word LLDB_NT_GNU_BUILD_ID_TAG = 0x03;
+
+} // namespace
+
 // Process Control
 Status ProcessElfCore::DoLoadCore() {
   Status error;
@@ -227,28 +359,46 @@ Status ProcessElfCore::DoLoadCore() {
     }
   }
 
-  // Core files are useless without the main executable. See if we can locate
-  // the main executable using data we found in the core file notes.
-  lldb::ModuleSP exe_module_sp = GetTarget().GetExecutableModule();
-  if (!exe_module_sp) {
-    // The first entry in the NT_FILE might be our executable
-    if (!m_nt_file_entries.empty()) {
-      ModuleSpec exe_module_spec;
-      exe_module_spec.GetArchitecture() = arch;
-      exe_module_spec.GetFileSpec().SetFile(
-          m_nt_file_entries[0].path.GetCString(), FileSpec::Style::native);
-      if (exe_module_spec.GetFileSpec()) {
-        exe_module_sp = GetTarget().GetOrCreateModule(exe_module_spec, 
-                                                      true /* notify */);
-        if (exe_module_sp)
-          GetTarget().SetExecutableModule(exe_module_sp, eLoadDependentsNo);
+  if (isLoadingModulesFromNtFileNote()) {
+    // Try to load the module list from the NtFile note section.
+    loadModulesFromNtFileNote();
+  } else {
+    // Load the modules via the dynamic linker plugin.
+
+    // Core files are useless without the main executable. See if we can locate
+    // the main executable using data we found in the core file notes.
+    lldb::ModuleSP exe_module_sp = GetTarget().GetExecutableModule();
+      if (!exe_module_sp) {
+        // The first entry in the NT_FILE might be our executable
+        if (!m_nt_file_entries.empty()) {
+          ModuleSpec exe_module_spec;
+          exe_module_spec.GetArchitecture() = arch;
+          exe_module_spec.GetFileSpec().SetFile(
+              m_nt_file_entries[0].path.GetCString(), FileSpec::Style::native);
+          if (exe_module_spec.GetFileSpec()) {
+            exe_module_sp =
+                GetTarget().GetOrCreateModule(exe_module_spec, true /* notify */);
+            if (exe_module_sp)
+              GetTarget().SetExecutableModule(exe_module_sp, eLoadDependentsNo);
+        }
       }
     }
   }
   return error;
 }
 
+bool ProcessElfCore::isLoadingModulesFromNtFileNote() {
+  return GetGlobalPluginProperties()->GetLoadModulesFromCoreNote() &&
+         !m_nt_file_entries.empty();
+}
+
 lldb_private::DynamicLoader *ProcessElfCore::GetDynamicLoader() {
+  if (isLoadingModulesFromNtFileNote()) {
+    // If we are inferring the module list from the the notes, we need
+    // to prevent the dynamic linker plugin from adding the modules again.
+    return nullptr;
+  }
+
   if (m_dyld_up.get() == nullptr)
     m_dyld_up.reset(DynamicLoader::FindPlugin(
         this, DynamicLoaderPOSIXDYLD::GetPluginNameStatic()));
@@ -382,8 +532,20 @@ void ProcessElfCore::Initialize() {
 
   llvm::call_once(g_once_flag, []() {
     PluginManager::RegisterPlugin(GetPluginNameStatic(),
-                                  GetPluginDescriptionStatic(), CreateInstance);
+                                  GetPluginDescriptionStatic(), CreateInstance,
+                                  DebuggerInitialize);
   });
+}
+
+void ProcessElfCore::DebuggerInitialize(Debugger &debugger) {
+  if (!PluginManager::GetSettingForProcessPlugin(
+          debugger, PluginProperties::GetSettingName())) {
+    const bool is_global_setting = true;
+    PluginManager::CreateSettingForProcessPlugin(
+        debugger, GetGlobalPluginProperties()->GetValueProperties(),
+        ConstString("Properties for the ELF core process plug-in."),
+        is_global_setting);
+  }
 }
 
 lldb::addr_t ProcessElfCore::GetImageInfoAddress() {
@@ -953,4 +1115,145 @@ bool ProcessElfCore::GetProcessInfo(ProcessInstanceInfo &info) {
                            add_exe_file_as_first_arg);
   }
   return true;
+}
+
+DataExtractor ProcessElfCore::GetDataForEntry(const NT_FILE_Entry &entry) {
+  ObjectFile *core_objfile = m_core_module_sp->GetObjectFile();
+  if (core_objfile == nullptr)
+    return DataExtractor();
+
+  uint64_t size = entry.end - entry.start;
+  const uint32_t kMaxElfData = 4 * 4096;
+  if (size > kMaxElfData)
+    size = kMaxElfData;
+
+  // Get the address range
+  const VMRangeToFileOffset::Entry *address_range =
+      m_core_aranges.FindEntryThatContains(entry.start);
+  if (address_range == nullptr || address_range->GetRangeEnd() < entry.start)
+    return DataExtractor();
+
+  // Convert the address into core file offset
+  const lldb::addr_t offset = entry.start - address_range->GetRangeBase();
+  const lldb::addr_t file_start = address_range->data.GetRangeBase();
+  const lldb::addr_t file_end = address_range->data.GetRangeEnd();
+
+  // Don't proceed if core file doesn't contain the actual data for this
+  // address range.
+  if (file_end <= file_start + offset)
+    return DataExtractor();
+
+  size_t bytes_left = file_end - (file_start + offset);
+  size = std::min(size, bytes_left);
+
+  DataExtractor file_data;
+  size_t extracted =
+      core_objfile->GetData(offset + file_start, size, file_data);
+
+  if (extracted != size)
+    return DataExtractor();
+
+  return file_data;
+}
+
+UUID ProcessElfCore::GetUUIDFromElfData(DataExtractor &elf_data,
+                                        const elf::ELFHeader &header) {
+  // Go through the segments; if we find a note segment, try to extract
+  // the UUID from it.
+  lldb::offset_t notes_offset = header.e_phoff;
+  elf::ELFProgramHeader program_header;
+  for (uint32_t i = 0; i < header.e_phnum; i++) {
+    if (!program_header.Parse(elf_data, &notes_offset))
+      break;
+    if (program_header.p_type != llvm::ELF::PT_NOTE)
+      continue;
+
+    // We have found a note segment, let us get the data.
+    size_t note_size = program_header.p_filesz;
+    DataExtractor note_segment;
+    if (note_segment.SetData(elf_data, program_header.p_offset, note_size) !=
+        note_size)
+      break;
+
+    // Look for the build id note in the note segment data.
+    lldb::offset_t note_offset = 0;
+    while (note_offset < note_segment.GetByteSize()) {
+      ELFNote note = ELFNote();
+      if (!note.Parse(note_segment, &note_offset))
+        break;
+
+      // Bump the note offset by the note size.
+      size_t note_size = llvm::alignTo(note.n_descsz, 4);
+      lldb::offset_t note_data_offset = note_offset;
+      note_offset += note_size;
+
+      // Go to the next note if this is not the build id note.
+      if (note.n_name != LLDB_NT_OWNER_GNU ||
+          note.n_type != LLDB_NT_GNU_BUILD_ID_TAG || note.n_descsz < 4)
+        continue;
+
+      // Try to extract the build id.
+      const uint8_t *build_id_buffer =
+          note_segment.PeekData(note_data_offset, note.n_descsz);
+      if (build_id_buffer == nullptr)
+        break;
+
+      return UUID::fromData(build_id_buffer, note.n_descsz);
+    }
+  }
+  return UUID();
+}
+
+void ProcessElfCore::loadModulesFromNtFileNote() {
+  Log *log(GetLogIfAllCategoriesSet(LIBLLDB_LOG_PROCESS));
+  for (const NT_FILE_Entry &entry : m_nt_file_entries) {
+    if (entry.file_ofs != 0 || entry.path.IsEmpty() || entry.start == entry.end)
+      continue;
+
+    LLDB_LOG(log, "Processing nt_file note entry '{0}'", entry.path);
+
+    // Try get the initial chunk of the potential module file from the core
+    // file.
+    DataExtractor file_data = GetDataForEntry(entry);
+
+    // If there is no module data in the core file, just skip the entry.
+    if (file_data.GetByteSize() == 0)
+      continue;
+
+    // Try to parse the ELF header from the file. If we fail, skip the entry.
+    elf::ELFHeader header;
+    lldb::offset_t parse_offset = 0;
+    if (!header.Parse(file_data, &parse_offset))
+      continue;
+    if (!elf::ELFHeader::MagicBytesMatch(header.e_ident))
+      continue;
+
+    UUID uuid = GetUUIDFromElfData(file_data, header);
+
+    LLDB_LOG(log, "  Found valid elf header magic; UUID: {0}",
+             uuid.GetAsString());
+
+    // Let us create a module from the name.
+    auto file_spec =
+        FileSpec(entry.path.GetStringRef(), GetArchitecture().GetTriple());
+    ModuleSpec module_spec(file_spec, uuid);
+    module_spec.GetArchitecture() = GetArchitecture();
+    Status error;
+    lldb::ModuleSP module_sp =
+        GetTarget().GetOrCreateModule(module_spec, true /* notify */, &error);
+    if (!module_sp) {
+     module_sp = Module::CreateModuleFromObjectFile<PlaceholderObjectFile>(
+          module_spec, entry.start, entry.end - entry.start);
+      GetTarget().GetImages().Append(module_sp, true /* notify */);
+      LLDB_LOG(log, "  Module not found, inserted placeholder module");
+    } else {
+      LLDB_LOG(log, "  Module resolved to '{0}'",
+               module_sp->GetFileSpec().GetPath());
+    }
+    bool load_address_changed = false;
+   module_sp->SetLoadAddress(GetTarget(), entry.start, false,
+                              load_address_changed);
+    LLDB_LOG(log, "  Module '{0}' loaded at address {1:x}", entry.path,
+             entry.start);
+  }
 }

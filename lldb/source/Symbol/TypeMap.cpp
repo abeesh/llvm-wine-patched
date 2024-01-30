@@ -8,6 +8,7 @@
 
 #include <vector>
 
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormattedStream.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -15,6 +16,10 @@
 #include "lldb/Symbol/SymbolVendor.h"
 #include "lldb/Symbol/Type.h"
 #include "lldb/Symbol/TypeMap.h"
+
+// TODO: Hack because of (internal). In general TypeMap should not
+// depend on specific implementations of SymbolFile (i.e. SymbolFileDWARF).
+#include "Plugins/SymbolFile/DWARF/SymbolFileDWARF.h"
 
 using namespace lldb;
 using namespace lldb_private;
@@ -142,6 +147,27 @@ void TypeMap::RemoveMismatchedTypes(const char *qualified_typename,
                                exact_match);
 }
 
+namespace {
+
+bool TypeBasenamesMatch(const std::string &type_basename,
+                        llvm::StringRef match_type_basename,
+                        bool is_instantiation) {
+  if (match_type_basename == type_basename)
+    return true;
+  // If the basenames do not match, let us see if {match_type_basename} could
+  // be an instantiation of {type_basename}.
+  if (is_instantiation)
+    return false;
+  size_t basename_size = type_basename.size();
+  if (match_type_basename.size() <= basename_size)
+    return false;
+  if (match_type_basename[basename_size] != '<')
+    return false;
+  return match_type_basename.take_front(basename_size) == type_basename;
+}
+
+} // namespace
+
 void TypeMap::RemoveMismatchedTypes(const std::string &type_scope,
                                     const std::string &type_basename,
                                     TypeClass type_class, bool exact_match) {
@@ -152,6 +178,8 @@ void TypeMap::RemoveMismatchedTypes(const std::string &type_scope,
   collection matching_types;
 
   iterator pos, end = m_types.end();
+
+  bool is_instantiation = type_basename.find('<') != std::string::npos;
 
   for (pos = m_types.begin(); pos != end; ++pos) {
     Type *the_type = pos->second.get();
@@ -164,7 +192,32 @@ void TypeMap::RemoveMismatchedTypes(const std::string &type_scope,
         continue;
     }
 
-    ConstString match_type_name_const_str(the_type->GetQualifiedName());
+    // TODO: Quick-n-dirty solution for (internal). Remove this code
+    // (and maybe the whole RemoveMismatchedTypes function) after a better
+    // optimization is landed.
+    std::string qualified_name;
+    ConstString match_type_name_const_str;
+    SymbolFileDWARF *symfile =
+        llvm::dyn_cast<SymbolFileDWARF>(the_type->GetSymbolFile());
+    if (symfile) {
+      DWARFDIE die = symfile->GetDIE(the_type->GetID());
+      die.GetQualifiedName(qualified_name);
+
+      if (!qualified_name.empty()) {
+        llvm::StringRef qual_name_ref(qualified_name);
+        qual_name_ref.consume_front("::");
+        // Sometimes `DWARFDIE::GetQualifiedName` is not good enough? Use it
+        // only when the qualified name is different from the unqualified name.
+        if (qual_name_ref != die.GetName()) {
+          match_type_name_const_str.SetCString(qualified_name.c_str());
+        }
+      }
+    }
+    // The hack above failed, fallback to `Type::GetQualifiedName`.
+    if (!match_type_name_const_str) {
+      match_type_name_const_str = the_type->GetQualifiedName();
+    }
+
     if (match_type_name_const_str) {
       const char *match_type_name = match_type_name_const_str.GetCString();
       llvm::StringRef match_type_scope;
@@ -172,7 +225,8 @@ void TypeMap::RemoveMismatchedTypes(const std::string &type_scope,
       if (Type::GetTypeScopeAndBasename(match_type_name, match_type_scope,
                                         match_type_basename,
                                         match_type_class)) {
-        if (match_type_basename == type_basename) {
+        if (TypeBasenamesMatch(type_basename, match_type_basename,
+                               is_instantiation)) {
           const size_t type_scope_size = type_scope.size();
           const size_t match_type_scope_size = match_type_scope.size();
           if (exact_match || (type_scope_size == match_type_scope_size)) {
@@ -204,7 +258,9 @@ void TypeMap::RemoveMismatchedTypes(const std::string &type_scope,
       } else {
         // The type we are currently looking at doesn't exists in a namespace
         // or class, so it only matches if there is no type scope...
-        keep_match = type_scope.empty() && type_basename == match_type_name;
+        keep_match = type_scope.empty() &&
+                     TypeBasenamesMatch(type_basename, match_type_name,
+                                        is_instantiation);
       }
     }
 

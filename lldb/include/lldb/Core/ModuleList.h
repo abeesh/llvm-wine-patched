@@ -353,10 +353,12 @@ public:
   /// \param[out] types
   ///     A type list gets populated with any matches.
   ///
+  /// \param[in] include_templates
+  ///     Include (instantiations of) class templates in the matches.
   void FindTypes(Module *search_first, ConstString name,
                  bool name_is_fully_qualified, size_t max_matches,
                  llvm::DenseSet<SymbolFile *> &searched_symbol_files,
-                 TypeList &types) const;
+                 TypeList &types, bool include_templates = false) const;
 
   bool FindSourceFile(const FileSpec &orig_spec, FileSpec &new_spec) const;
 

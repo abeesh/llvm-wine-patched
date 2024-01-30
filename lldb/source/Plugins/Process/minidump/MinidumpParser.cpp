@@ -133,6 +133,36 @@ MinidumpParser::GetThreadContextWow64(const minidump::Thread &td) {
   // stored in the first slot of the 64-bit TEB (wow64teb.Reserved1[0]).
 }
 
+ArchSpec MinidumpParser::GetModuleArchitecture(llvm::StringRef file_name,
+                                               const minidump::Module *module) {
+
+  ArchSpec arch = GetArchitecture();
+  if (arch.GetTriple().isOSLinux()) {
+    // When producing minidumps on linux+wine, the CVRecords for PE-modules
+    // will be stored as Pdb70 and the architecture for them should be set
+    // accordingly.
+    auto cv_record =
+        GetData().slice(module->CvRecord.RVA, module->CvRecord.DataSize);
+
+    // Read the CV record signature
+    const llvm::support::ulittle32_t *signature = nullptr;
+    const Status error = consumeObject(cv_record, signature);
+    if (error.Fail())
+      return arch;
+
+    const auto cv_signature =
+        static_cast<CvSignature>(static_cast<uint32_t>(*signature));
+
+    if ((cv_signature == CvSignature::Pdb70)
+        && (file_name.endswith_insensitive(".exe")
+            || file_name.endswith_insensitive(".dll"))) {
+      arch.SetTriple("x86_64-pc-windows-msvc");
+    }
+  }
+
+  return arch;
+}
+
 ArchSpec MinidumpParser::GetArchitecture() {
   if (m_arch.IsValid())
     return m_arch;

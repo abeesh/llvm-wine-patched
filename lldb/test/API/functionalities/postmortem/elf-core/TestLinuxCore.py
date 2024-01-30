@@ -251,7 +251,8 @@ class LinuxCoreTestCase(TestBase):
     @skipIfLLVMTargetMissing("AArch64")
     def test_aarch64_pac(self):
         """Test that lldb can unwind stack for AArch64 elf core file with PAC enabled."""
-
+        # Avoid reading modules from the NtFile note - it does not contain the modules.
+        self.dbg.HandleCommand('settings set plugin.process.elf-core.load-modules-from-core-note false')
         target = self.dbg.CreateTarget("linux-aarch64-pac.out")
         self.assertTrue(target, VALID_TARGET)
         process = target.LoadCore("linux-aarch64-pac.core")

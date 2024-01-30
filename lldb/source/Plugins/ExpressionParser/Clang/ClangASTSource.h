@@ -153,6 +153,19 @@ public:
   ///     The Decl to be completed in place.
   void CompleteType(clang::ObjCInterfaceDecl *Class) override;
 
+  /// Find class template specialization for a class template.
+  ///
+  /// \param[in] ClassTemplate
+  ///     The class template to specialize.
+  /// \param[in] Args
+  ///      Specialization arguments.
+  ///  \return
+  ///      True if a specialization is found.
+  bool FindClassTemplateSpecialization(
+      clang::ClassTemplateDecl *ClassTemplate,
+      llvm::ArrayRef<clang::TemplateArgument> Args) override;
+
+  //------------------------------------------------------------------
   /// Called on entering a translation unit.  Tells Clang by calling
   /// setHasExternalVisibleStorage() and setHasExternalLexicalStorage() that
   /// this object has something to say about undefined names.
@@ -229,6 +242,12 @@ public:
 
     void CompleteType(clang::ObjCInterfaceDecl *Class) override {
       return m_original.CompleteType(Class);
+    }
+
+    bool FindClassTemplateSpecialization(
+        clang::ClassTemplateDecl *ClassTemplate,
+        llvm::ArrayRef<clang::TemplateArgument> Args) override {
+      return m_original.FindClassTemplateSpecialization(ClassTemplate, Args);
     }
 
     bool layoutRecordType(

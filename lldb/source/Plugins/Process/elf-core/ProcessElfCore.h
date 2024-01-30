@@ -19,6 +19,8 @@
 #include <list>
 #include <vector>
 
+#include "lldb/lldb-forward.h"
+
 #include "lldb/Target/PostMortemProcess.h"
 #include "lldb/Utility/ConstString.h"
 #include "lldb/Utility/Status.h"
@@ -43,6 +45,8 @@ public:
   static llvm::StringRef GetPluginNameStatic() { return "elf-core"; }
 
   static llvm::StringRef GetPluginDescriptionStatic();
+
+  static void DebuggerInitialize(lldb_private::Debugger &debugger);
 
   // Constructors and Destructors
   ProcessElfCore(lldb::TargetSP target_sp, lldb::ListenerSP listener_sp,
@@ -160,6 +164,12 @@ private:
   llvm::Error parseNetBSDNotes(llvm::ArrayRef<lldb_private::CoreNote> notes);
   llvm::Error parseOpenBSDNotes(llvm::ArrayRef<lldb_private::CoreNote> notes);
   llvm::Error parseLinuxNotes(llvm::ArrayRef<lldb_private::CoreNote> notes);
+
+  bool isLoadingModulesFromNtFileNote();
+  void loadModulesFromNtFileNote();
+  lldb_private::DataExtractor GetDataForEntry(const NT_FILE_Entry &entry);
+  lldb_private::UUID GetUUIDFromElfData(lldb_private::DataExtractor &elf_data,
+                                        const elf::ELFHeader &header);
 };
 
 #endif // LLDB_SOURCE_PLUGINS_PROCESS_ELF_CORE_PROCESSELFCORE_H

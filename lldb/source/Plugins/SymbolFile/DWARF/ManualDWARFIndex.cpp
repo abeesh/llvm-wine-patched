@@ -121,6 +121,35 @@ void ManualDWARFIndex::Index() {
     progress.Increment();
   };
 
+  auto finalize_generics_fn = [this, &sets]() {
+    NameToDIE &result = m_set.generic_types;
+    NameToDIE intermediate;
+    for (auto &set : sets)
+      intermediate.Append(set.generic_types);
+    intermediate.Finalize();
+
+    // The generics are initially indexed with fully qualified name.
+    // In the following code, we choose one template instantiation
+    // for each qualified template name, and build the final index
+    // with unqualified names as keys.
+    ConstString last_name;
+    intermediate.ForEach(
+        [&last_name, &result](ConstString qualified, const DIERef &ref) {
+          if (qualified != last_name) {
+            last_name = qualified;
+
+            // Remove qualifiers from the name and insert it into the index.
+            llvm::StringRef name_ref = qualified.GetStringRef();
+            size_t separator_pos = name_ref.rfind(':');
+            if (separator_pos != llvm::StringRef::npos)
+              name_ref = name_ref.drop_front(separator_pos + 1);
+            result.Insert(ConstString(name_ref), ref);
+          }
+          return true;
+        });
+    result.Finalize();
+  };
+
   pool.async(finalize_fn, &IndexSet::function_basenames);
   pool.async(finalize_fn, &IndexSet::function_fullnames);
   pool.async(finalize_fn, &IndexSet::function_methods);
@@ -128,6 +157,7 @@ void ManualDWARFIndex::Index() {
   pool.async(finalize_fn, &IndexSet::objc_class_selectors);
   pool.async(finalize_fn, &IndexSet::globals);
   pool.async(finalize_fn, &IndexSet::types);
+  pool.async([&]() { finalize_generics_fn(); });
   pool.async(finalize_fn, &IndexSet::namespaces);
   pool.wait();
 
@@ -196,6 +226,7 @@ void ManualDWARFIndex::IndexUnitImpl(DWARFUnit &unit,
     bool is_declaration = false;
     // bool is_artificial = false;
     bool has_address = false;
+    bool is_enum_class = false;
     bool has_location_or_const_value = false;
     bool is_global_or_static_variable = false;
 
@@ -214,6 +245,11 @@ void ManualDWARFIndex::IndexUnitImpl(DWARFUnit &unit,
         case DW_AT_declaration:
           if (attributes.ExtractFormValueAtIndex(i, form_value))
             is_declaration = form_value.Unsigned() != 0;
+          break;
+
+        case DW_AT_enum_class:
+          if (attributes.ExtractFormValueAtIndex(i, form_value))
+            is_enum_class = form_value.Boolean();
           break;
 
         case DW_AT_MIPS_linkage_name:
@@ -315,10 +351,41 @@ void ManualDWARFIndex::IndexUnitImpl(DWARFUnit &unit,
     case DW_TAG_typedef:
     case DW_TAG_union_type:
     case DW_TAG_unspecified_type:
-      if (name && !is_declaration)
-        set.types.Insert(ConstString(name), ref);
+      if (name && !is_declaration) {
+        ConstString name_cs(name);
+        set.types.Insert(name_cs, ref);
+        if (Language::LanguageIsCPlusPlus(cu_language) && !name_cs.IsEmpty() &&
+            name[name_cs.GetLength() - 1] == '>') {
+          const char *angle_bracket_pos = strchr(name, '<');
+          assert(angle_bracket_pos && "missing matching angle bracket");
+          size_t generic_length = angle_bracket_pos - name;
+
+          // We use qualified names as keys for generic names so that we
+          // can later easily choose one representative instantiation for
+          // each template. Here, we compute the qualified name and store
+          // the type under that name.
+          DWARFDIE parent_decl_context = die.GetParentDeclContextDIE(&unit);
+          std::string qualified_name;
+          if (parent_decl_context.Tag() != DW_TAG_compile_unit &&
+              parent_decl_context.Tag() != DW_TAG_partial_unit)
+            parent_decl_context.GetQualifiedName(qualified_name);
+          qualified_name += "::";
+          qualified_name += std::string(name, generic_length);
+          set.generic_types.Insert(ConstString(qualified_name.c_str()), ref);
+        }
+      }
       if (mangled_cstr && !is_declaration)
         set.types.Insert(ConstString(mangled_cstr), ref);
+      // Unscoped enumerators are basically constants in the surrounding scope.
+      if (tag == DW_TAG_enumeration_type && !is_enum_class) {
+        for (const DWARFDebugInfoEntry *value = die.GetFirstChild();
+             value != nullptr; value = value->GetSibling()) {
+          if (value->Tag() == DW_TAG_enumerator) {
+            DIERef value_ref = DWARFDIE(&unit, value).GetDIERef().getValue();
+            set.globals.Insert(ConstString(value->GetName(&unit)), value_ref);
+          }
+        }
+      }
       break;
 
     case DW_TAG_namespace:
@@ -400,6 +467,21 @@ void ManualDWARFIndex::GetTypes(
   auto name = context[0].name;
   m_set.types.Find(ConstString(name),
                    DIERefCallback(callback, llvm::StringRef(name)));
+}
+
+void ManualDWARFIndex::GetGenericTypes(
+    ConstString name, llvm::function_ref<bool(DWARFDIE die)> callback) {
+  Index();
+  m_set.generic_types.Find(name, DIERefCallback(callback, name.GetStringRef()));
+}
+
+void ManualDWARFIndex::GetGenericTypes(
+    const DWARFDeclContext &context,
+    llvm::function_ref<bool(DWARFDIE die)> callback) {
+  Index();
+  auto name = context[0].name;
+  m_set.generic_types.Find(ConstString(name),
+                           DIERefCallback(callback, llvm::StringRef(name)));
 }
 
 void ManualDWARFIndex::GetNamespaces(

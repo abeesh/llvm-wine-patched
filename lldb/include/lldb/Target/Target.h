@@ -224,6 +224,10 @@ public:
 
   void SetInjectLocalVariables(ExecutionContext *exe_ctx, bool b);
 
+  bool GetInferClassTemplates() const;
+
+  void SetInferClassTemplates(bool b);
+
   void SetRequireHardwareBreakpoints(bool b);
 
   bool GetRequireHardwareBreakpoints() const;

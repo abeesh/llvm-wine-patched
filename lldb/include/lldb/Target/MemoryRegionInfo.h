@@ -69,6 +69,12 @@ public:
 
   void SetBlocksize(lldb::offset_t blocksize) { m_blocksize = blocksize; }
 
+  lldb::offset_t GetFileOffset() const { return m_file_offset; }
+
+  void SetFileOffset(lldb::offset_t file_offset) {
+    m_file_offset = file_offset;
+  }
+
   void SetMemoryTagged(OptionalBool val) { m_memory_tagged = val; }
 
   // Get permissions as a uint32_t that is a mask of one or more bits from the
@@ -142,6 +148,7 @@ protected:
   OptionalBool m_is_stack_memory = eDontKnow;
   int m_pagesize = 0;
   llvm::Optional<std::vector<lldb::addr_t>> m_dirty_pages;
+  lldb::offset_t m_file_offset = LLDB_INVALID_OFFSET;
 };
   
 inline bool operator<(const MemoryRegionInfo &lhs,

@@ -25,4 +25,44 @@ DEFINE_SIGNED_ENUM(l, signed long)
 DEFINE_UNSIGNED_ENUM(ull, unsigned long long)
 DEFINE_SIGNED_ENUM(ll, signed long long)
 
-int main(int argc, char const *argv[]) { return 0; }
+enum MyEnum {
+  eFoo = 1,
+};
+MyEnum my_enum = eFoo;
+
+enum class MyScopedEnum {
+  eBar = 1,
+};
+MyScopedEnum my_scoped_enum = MyScopedEnum::eBar;
+
+int x = 2;
+
+enum CEnum { eValue = 2 } ce;
+
+namespace A {
+
+enum AEnum { eValue = 0 } ae;
+
+void g() {
+  // break here
+}
+
+}; // namespace A
+
+struct B {
+  enum BEnum { eValue = 1 } be;
+
+  void f() {
+    // break here
+  }
+};
+
+int main() {
+  A::g();
+
+  B b;
+  b.f();
+
+  // break here
+  return 0;
+}

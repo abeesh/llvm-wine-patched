@@ -385,6 +385,15 @@ size_t ProcessMinidump::DoReadMemory(lldb::addr_t addr, void *buf, size_t size,
   return mem.size();
 }
 
+ArchSpec ProcessMinidump::GetModuleArchitecture(llvm::StringRef file_name,
+                                                const minidump::Module *module) {
+  if (!m_is_wow64) {
+    return m_minidump_parser->GetModuleArchitecture(file_name, module);
+  }
+
+  return GetArchitecture();
+}
+
 ArchSpec ProcessMinidump::GetArchitecture() {
   if (!m_is_wow64) {
     return m_minidump_parser->GetArchitecture();
@@ -545,9 +554,10 @@ void ProcessMinidump::ReadModuleList() {
     }
 
     const auto uuid = m_minidump_parser->GetModuleUUID(module);
-    auto file_spec = FileSpec(name, GetArchitecture().GetTriple());
+    const auto arch = GetModuleArchitecture(llvm::StringRef(name), module);
+    auto file_spec = FileSpec(name, arch.GetTriple());
     ModuleSpec module_spec(file_spec, uuid);
-    module_spec.GetArchitecture() = GetArchitecture();
+    module_spec.GetArchitecture() = arch;
     Status error;
     // Try and find a module with a full UUID that matches. This function will
     // add the module to the target if it finds one.

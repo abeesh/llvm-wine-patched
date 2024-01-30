@@ -37,6 +37,7 @@ namespace clang {
 class ASTConsumer;
 class ASTContext;
 class ASTSourceDescriptor;
+class ClassTemplateDecl;
 class CXXBaseSpecifier;
 class CXXCtorInitializer;
 class CXXRecordDecl;
@@ -209,6 +210,11 @@ public:
   /// set on the ObjCInterfaceDecl via the function
   /// \c ObjCInterfaceDecl::setExternallyCompleted().
   virtual void CompleteType(ObjCInterfaceDecl *Class);
+
+  /// Gives the external AST source an opportunity to insert class
+  /// template instantiations.
+  virtual bool FindClassTemplateSpecialization(ClassTemplateDecl *ClassTemplate,
+                                               ArrayRef<TemplateArgument> Args);
 
   /// Loads comment ranges.
   virtual void ReadComments();

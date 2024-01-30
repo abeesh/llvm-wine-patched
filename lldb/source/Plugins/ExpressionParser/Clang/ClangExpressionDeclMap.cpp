@@ -1569,6 +1569,23 @@ void ClangExpressionDeclMap::AddOneVariable(NameSearchContext &context,
       CompleteType(objc_object_ptr_type->getInterfaceDecl());
   }
 
+  // Check if this variable actually represents an unscoped enumeration
+  // constant. They're stored in the index with global variables and thus can be
+  // looked up as a global variable. But the declarations for the enumeration
+  // members (enumerators) are already generated and exist in the AST context.
+  // We just need to find the one corresponsing to this "variable".
+  if (const clang::EnumType *enum_type =
+          dyn_cast<clang::EnumType>(parser_opaque_type.getTypePtr())) {
+    if (!enum_type->isScopedEnumeralType()) {
+      for (clang::EnumConstantDecl *ecd : enum_type->getDecl()->enumerators()) {
+        if (ecd->getName() == var->GetUnqualifiedName().GetStringRef()) {
+          context.AddNamedDecl(ecd);
+          return;
+        }
+      }
+    }
+  }
+
   bool is_reference = pt.IsReferenceType();
 
   NamedDecl *var_decl = nullptr;

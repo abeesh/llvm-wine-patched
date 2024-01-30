@@ -428,7 +428,7 @@ public:
   void
   FindTypes(ConstString type_name, bool exact_match, size_t max_matches,
             llvm::DenseSet<lldb_private::SymbolFile *> &searched_symbol_files,
-            TypeList &types);
+            TypeList &types, bool include_templates = false);
 
   /// Find types by name.
   ///
@@ -458,7 +458,8 @@ public:
   ///     A type list gets populated with any matches.
   void FindTypesInNamespace(ConstString type_name,
                             const CompilerDeclContext &parent_decl_ctx,
-                            size_t max_matches, TypeList &type_list);
+                            size_t max_matches, TypeList &type_list,
+                            bool include_templates = false);
 
   /// Get const accessor for the module architecture.
   ///
@@ -1111,7 +1112,7 @@ private:
       ConstString name, const CompilerDeclContext &parent_decl_ctx,
       size_t max_matches,
       llvm::DenseSet<lldb_private::SymbolFile *> &searched_symbol_files,
-      TypeMap &types);
+      TypeMap &types, bool include_templates);
 
   Module(const Module &) = delete;
   const Module &operator=(const Module &) = delete;

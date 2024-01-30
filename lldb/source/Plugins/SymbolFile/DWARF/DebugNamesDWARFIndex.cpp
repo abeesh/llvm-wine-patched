@@ -236,6 +236,17 @@ void DebugNamesDWARFIndex::GetNamespaces(
   m_fallback.GetNamespaces(name, callback);
 }
 
+void DebugNamesDWARFIndex::GetGenericTypes(
+    ConstString name, llvm::function_ref<bool(DWARFDIE die)> callback) {
+  m_fallback.GetGenericTypes(name, callback);
+}
+
+void DebugNamesDWARFIndex::GetGenericTypes(
+    const DWARFDeclContext &context,
+    llvm::function_ref<bool(DWARFDIE die)> callback) {
+  m_fallback.GetGenericTypes(context, callback);
+}
+
 void DebugNamesDWARFIndex::GetFunctions(
     ConstString name, SymbolFileDWARF &dwarf,
     const CompilerDeclContext &parent_decl_ctx, uint32_t name_type_mask,

@@ -470,7 +470,10 @@ void NativeThreadLinux::SetStoppedByVForkDone() {
 
 void NativeThreadLinux::SetStoppedWithNoReason() {
   SetStopped();
+  ResetStopReason();
+}
 
+void NativeThreadLinux::ResetStopReason() {
   m_stop_info.reason = StopReason::eStopReasonNone;
   m_stop_info.details.signal.signo = 0;
 }

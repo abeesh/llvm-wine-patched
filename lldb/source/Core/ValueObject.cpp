@@ -231,6 +231,10 @@ void ValueObject::SetNeedsUpdate() {
   // We have to clear the value string here so ConstResult children will notice
   // if their values are changed by hand (i.e. with SetValueAsCString).
   ClearUserVisibleData(eClearUserVisibleDataItemsValue);
+  // Children have to be re-computed after updating the parent value.
+  m_flags.m_children_count_valid = false;
+  m_children.Clear();
+  SetSyntheticChildren(lldb::SyntheticChildrenSP());
 }
 
 void ValueObject::ClearDynamicTypeInformation() {

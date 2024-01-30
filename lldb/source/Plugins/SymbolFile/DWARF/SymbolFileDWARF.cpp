@@ -2122,7 +2122,6 @@ void SymbolFileDWARF::FindGlobalVariables(
     uint32_t max_matches, VariableList &variables) {
   std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
   Log *log = GetLog(DWARFLog::Lookups);
-
   if (log)
     GetObjectFile()->GetModule()->LogMessage(
         log,
@@ -2155,8 +2154,7 @@ void SymbolFileDWARF::FindGlobalVariables(
     if (!sc.module_sp)
       sc.module_sp = m_objfile_sp->GetModule();
     assert(sc.module_sp);
-
-    if (die.Tag() != DW_TAG_variable)
+    if (die.Tag() != DW_TAG_variable && die.Tag() != DW_TAG_enumerator)
       return true;
 
     auto *dwarf_cu = llvm::dyn_cast<DWARFCompileUnit>(die.GetCU());
@@ -2186,6 +2184,48 @@ void SymbolFileDWARF::FindGlobalVariables(
 
     return variables.GetSize() - original_size < max_matches;
   });
+
+  // If we don't have enough matches and the variable context is not empty, try
+  // to resolve the context as a type and look for static const members.
+  if (variables.GetSize() - original_size < max_matches && !context.empty()) {
+    llvm::StringRef type_scope;
+    llvm::StringRef type_name;
+    TypeClass type_class;
+    if (!Type::GetTypeScopeAndBasename(context, type_scope, type_name,
+                                       type_class))
+      type_name = context;
+
+    m_index->GetTypes(ConstString(type_name), [&](DWARFDIE parent) {
+      llvm::StringRef parent_type_name = GetDWARFDeclContext(parent)
+                                             .GetQualifiedNameAsConstString()
+                                             .GetStringRef();
+
+      // This type is from another scope, skip it.
+      if (!parent_type_name.endswith(context))
+        return true;
+
+      auto *dwarf_cu = llvm::dyn_cast<DWARFCompileUnit>(parent.GetCU());
+      if (!dwarf_cu)
+        return true;
+
+      sc.comp_unit = GetCompUnitForDWARFCompUnit(*dwarf_cu);
+
+      for (DWARFDIE die = parent.GetFirstChild(); die.IsValid();
+           die = die.GetSibling()) {
+        // Try parsing the entry as a static const member.
+        if (auto var_sp = ParseStaticConstMemberDIE(sc, die)) {
+          if (var_sp->GetUnqualifiedName().GetStringRef() != basename)
+            continue;
+
+          // There can be only one member with a given name.
+          variables.AddVariableIfUnique(var_sp);
+          break;
+        }
+      }
+
+      return variables.GetSize() - original_size < max_matches;
+    });
+  }
 
   // Return the number of variable that were appended to the list
   const uint32_t num_matches = variables.GetSize() - original_size;
@@ -2407,7 +2447,7 @@ void SymbolFileDWARF::FindTypes(
     ConstString name, const CompilerDeclContext &parent_decl_ctx,
     uint32_t max_matches,
     llvm::DenseSet<lldb_private::SymbolFile *> &searched_symbol_files,
-    TypeMap &types) {
+    TypeMap &types, bool include_templates) {
   std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
   // Make sure we haven't already searched this SymbolFile before.
   if (!searched_symbol_files.insert(this).second)
@@ -2448,6 +2488,16 @@ void SymbolFileDWARF::FindTypes(
     return types.GetSize() < max_matches;
   });
 
+  m_index->GetGenericTypes(name, [&](DWARFDIE die) {
+    if (!DIEInDeclContext(parent_decl_ctx, die))
+      return true; // The containing decl contexts don't match
+    if (Type *matching_type = ResolveType(die, true, true)) {
+      types.InsertUnique(matching_type->shared_from_this());
+    }
+
+    return types.GetSize() < max_matches;
+  });
+
   // Next search through the reachable Clang modules. This only applies for
   // DWARF objects compiled with -gmodules that haven't been processed by
   // dsymutil.
@@ -2458,7 +2508,7 @@ void SymbolFileDWARF::FindTypes(
       if (ModuleSP external_module_sp = pair.second)
         if (SymbolFile *sym_file = external_module_sp->GetSymbolFile())
           sym_file->FindTypes(name, parent_decl_ctx, max_matches,
-                              searched_symbol_files, types);
+                              searched_symbol_files, types, include_templates);
   }
 
   if (log && types.GetSize()) {
@@ -3117,6 +3167,90 @@ size_t SymbolFileDWARF::ParseVariablesForContext(const SymbolContext &sc) {
   return 0;
 }
 
+VariableSP SymbolFileDWARF::ParseStaticConstMemberDIE(
+    const lldb_private::SymbolContext &sc, const DWARFDIE &die) {
+  if (die.GetDWARF() != this)
+    return die.GetDWARF()->ParseStaticConstMemberDIE(sc, die);
+
+  // Look only for members, ignore all other types of entries.
+  if (die.Tag() != DW_TAG_member)
+    return nullptr;
+
+  if (VariableSP var_sp = GetDIEToVariable()[die.GetDIE()])
+    return var_sp; // Already been parsed!
+
+  const char *name = nullptr;
+  const char *mangled = nullptr;
+  Declaration decl;
+  DWARFExpression location;
+  DWARFFormValue type_die_form;
+  DWARFFormValue const_value_form;
+
+  DWARFAttributes attributes;
+  const size_t num_attributes = die.GetAttributes(attributes);
+
+  for (size_t i = 0; i < num_attributes; ++i) {
+    dw_attr_t attr = attributes.AttributeAtIndex(i);
+    DWARFFormValue form_value;
+
+    if (!attributes.ExtractFormValueAtIndex(i, form_value))
+      continue;
+
+    switch (attr) {
+    case DW_AT_decl_file:
+      decl.SetFile(sc.comp_unit->GetSupportFiles().GetFileSpecAtIndex(
+          form_value.Unsigned()));
+      break;
+    case DW_AT_decl_line:
+      decl.SetLine(form_value.Unsigned());
+      break;
+    case DW_AT_decl_column:
+      decl.SetColumn(form_value.Unsigned());
+      break;
+    case DW_AT_name:
+      name = form_value.AsCString();
+      break;
+    case DW_AT_type:
+     type_die_form = form_value;
+      break;
+    case DW_AT_const_value:
+      const_value_form = form_value;
+      break;
+    }
+  }
+
+  // Look only for static const members with const values.
+  if (!DWARFFormValue::IsDataForm(const_value_form.Form()))
+    return nullptr;
+
+  SymbolFileTypeSP type_sp = std::make_shared<SymbolFileType>(
+      *this, GetUID(type_die_form.Reference()));
+
+  if (type_sp->GetType()) {
+    location.UpdateValue(const_value_form.Unsigned(),
+                         type_sp->GetType()->GetByteSize(nullptr).getValueOr(0),
+                         die.GetCU()->GetAddressByteSize());
+  }
+
+  if (Language::LanguageIsCPlusPlus(GetLanguage(*die.GetCU())))
+    mangled =
+        GetDWARFDeclContext(die).GetQualifiedNameAsConstString().GetCString();
+
+  ValueType scope = eValueTypeVariableGlobal;
+  Variable::RangeList scope_ranges;
+
+  VariableSP var_sp = std::make_shared<Variable>(
+      die.GetID(), name, mangled, type_sp, scope, sc.comp_unit, scope_ranges,
+      &decl, location, /*is_external*/ true, /*is_artificial*/ false,
+      /*is_static_member*/ true);
+  var_sp->SetLocationIsConstantValueData(true);
+
+  // Cache this variable, so we don't parse it over and over again.
+  GetDIEToVariable()[die.GetDIE()] = var_sp;
+
+  return var_sp;
+}
+
 VariableSP SymbolFileDWARF::ParseVariableDIECached(const SymbolContext &sc,
                                                    const DWARFDIE &die) {
   if (!die)
@@ -3149,7 +3283,7 @@ VariableSP SymbolFileDWARF::ParseVariableDIE(const SymbolContext &sc,
   const dw_tag_t tag = die.Tag();
   ModuleSP module = GetObjectFile()->GetModule();
 
-  if (tag != DW_TAG_variable && tag != DW_TAG_constant &&
+  if (tag != DW_TAG_variable && tag != DW_TAG_constant && tag != DW_TAG_enumerator &&
       (tag != DW_TAG_formal_parameter || !sc.function))
     return nullptr;
 
@@ -3158,7 +3292,7 @@ VariableSP SymbolFileDWARF::ParseVariableDIE(const SymbolContext &sc,
   const char *name = nullptr;
   const char *mangled = nullptr;
   Declaration decl;
-  DWARFFormValue type_die_form;
+  DWARFDIE type_die;
   DWARFExpression location;
   bool is_external = false;
   bool is_artificial = false;
@@ -3190,7 +3324,7 @@ VariableSP SymbolFileDWARF::ParseVariableDIE(const SymbolContext &sc,
       mangled = form_value.AsCString();
       break;
     case DW_AT_type:
-      type_die_form = form_value;
+      type_die = form_value.Reference();
       break;
     case DW_AT_external:
       is_external = form_value.Boolean();
@@ -3277,6 +3411,11 @@ VariableSP SymbolFileDWARF::ParseVariableDIE(const SymbolContext &sc,
     }
   }
 
+  // For enumerators the type is their parent (DW_TAG_enumeration_type).
+  if (tag == DW_TAG_enumerator) {
+    type_die = die.GetParent();
+  }
+
   const DWARFDIE parent_context_die = GetDeclContextDIEContainingDIE(die);
   const DWARFDIE sc_parent_die = GetParentSymbolContextDIE(die);
   const dw_tag_t parent_tag = sc_parent_die.Tag();
@@ -3301,7 +3440,8 @@ VariableSP SymbolFileDWARF::ParseVariableDIE(const SymbolContext &sc,
     // able to generate a fully qualified name from the
     // declaration context.
     if ((parent_tag == DW_TAG_compile_unit ||
-         parent_tag == DW_TAG_partial_unit) &&
+         parent_tag == DW_TAG_partial_unit ||
+         parent_tag == DW_TAG_enumeration_type) &&
         Language::LanguageIsCPlusPlus(GetLanguage(*die.GetCU())))
       mangled =
           GetDWARFDeclContext(die).GetQualifiedNameAsConstString().GetCString();
@@ -3309,6 +3449,8 @@ VariableSP SymbolFileDWARF::ParseVariableDIE(const SymbolContext &sc,
 
   if (tag == DW_TAG_formal_parameter)
     scope = eValueTypeVariableArgument;
+  else if (tag == DW_TAG_enumerator)
+    scope = eValueTypeVariableGlobal;
   else {
     // DWARF doesn't specify if a DW_TAG_variable is a local, global
     // or static variable, so we have to do a little digging:
@@ -3457,7 +3599,7 @@ VariableSP SymbolFileDWARF::ParseVariableDIE(const SymbolContext &sc,
   }
 
   auto type_sp = std::make_shared<SymbolFileType>(
-      *this, GetUID(type_die_form.Reference()));
+      *this, GetUID(type_die));
 
   if (use_type_size_for_value && type_sp->GetType())
     location.UpdateValue(const_value_form.Unsigned(),
@@ -3521,7 +3663,8 @@ void SymbolFileDWARF::ParseAndAppendGlobalVariable(
     return;
 
   dw_tag_t tag = die.Tag();
-  if (tag != DW_TAG_variable && tag != DW_TAG_constant)
+  if (tag != DW_TAG_variable && tag != DW_TAG_constant &&
+      tag != DW_TAG_enumerator)
     return;
 
   // Check to see if we have already parsed this variable or constant?
@@ -3670,6 +3813,7 @@ size_t SymbolFileDWARF::ParseVariablesInFunctionContextRecursive(
   dw_tag_t tag = die.Tag();
 
   if ((tag == DW_TAG_variable) || (tag == DW_TAG_constant) ||
+      (tag == DW_TAG_enumerator) ||
       (tag == DW_TAG_formal_parameter)) {
     accumulator.push_back(*die.GetDIERef());
   }

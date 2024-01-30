@@ -380,7 +380,15 @@ void UnwindPlan::InsertRow(const UnwindPlan::RowSP &row_sp,
     *it = row_sp;
 }
 
-UnwindPlan::RowSP UnwindPlan::GetRowForFunctionOffset(int offset) const {
+UnwindPlan::RowSP
+UnwindPlan::GetRowForFunctionOffset(int offset, Address start_address) const {
+  Address range_base = m_plan_valid_address_range.GetBaseAddress();
+  // If we have the function start address and the unwind info base address,
+  // make |offset| relative to the unwind info base address.
+  if (start_address.IsValid() && range_base.IsValid() &&
+      start_address.GetSection() == range_base.GetSection()) {
+    offset = start_address.GetOffset() + offset - range_base.GetOffset();
+  }
   RowSP row;
   if (!m_row_list.empty()) {
     if (offset == -1)

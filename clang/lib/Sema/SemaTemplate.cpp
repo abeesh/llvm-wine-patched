@@ -3794,6 +3794,14 @@ QualType Sema::CheckTemplateIdType(TemplateName Name,
     ClassTemplateSpecializationDecl *Decl
       = ClassTemplate->findSpecialization(Converted, InsertPos);
     if (!Decl) {
+      // If we have external source, try to find the specialization
+      // in the external source.
+      if (auto *Source = Context.getExternalSource()) {
+        if (Source->FindClassTemplateSpecialization(ClassTemplate, Converted))
+          Decl = ClassTemplate->findSpecialization(Converted, InsertPos);
+      }
+    }
+    if (!Decl) {
       // This is the first time we have referenced this class template
       // specialization. Create the canonical declaration and add it to
       // the set of specializations.

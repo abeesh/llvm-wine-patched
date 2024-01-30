@@ -44,6 +44,12 @@ public:
                 llvm::function_ref<bool(DWARFDIE die)> callback) override;
   void GetTypes(const DWARFDeclContext &context,
                 llvm::function_ref<bool(DWARFDIE die)> callback) override;
+  void
+  GetGenericTypes(ConstString name,
+                  llvm::function_ref<bool(DWARFDIE die)> callback) override;
+  void
+  GetGenericTypes(const DWARFDeclContext &context,
+                  llvm::function_ref<bool(DWARFDIE die)> callback) override;
   void GetNamespaces(ConstString name,
                      llvm::function_ref<bool(DWARFDIE die)> callback) override;
   void GetFunctions(ConstString name, SymbolFileDWARF &dwarf,
@@ -64,6 +70,7 @@ public:
     NameToDIE objc_class_selectors;
     NameToDIE globals;
     NameToDIE types;
+    NameToDIE generic_types;
     NameToDIE namespaces;
     bool Decode(const DataExtractor &data, lldb::offset_t *offset_ptr);
     void Encode(DataEncoder &encoder) const;

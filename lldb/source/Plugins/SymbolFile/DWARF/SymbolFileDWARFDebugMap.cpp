@@ -1172,11 +1172,11 @@ void SymbolFileDWARFDebugMap::FindTypes(
     ConstString name, const CompilerDeclContext &parent_decl_ctx,
     uint32_t max_matches,
     llvm::DenseSet<lldb_private::SymbolFile *> &searched_symbol_files,
-    TypeMap &types) {
+    TypeMap &types, bool include_templates) {
   std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
   ForEachSymbolFile([&](SymbolFileDWARF *oso_dwarf) -> bool {
     oso_dwarf->FindTypes(name, parent_decl_ctx, max_matches,
-                         searched_symbol_files, types);
+                         searched_symbol_files, types, include_templates);
     return types.GetSize() >= max_matches;
   });
 }

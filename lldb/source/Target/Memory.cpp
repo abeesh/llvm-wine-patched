@@ -60,7 +60,13 @@ void MemoryCache::Flush(addr_t addr, size_t size) {
     AddrRange flush_range(addr, size);
     BlockMap::iterator pos = m_L1_cache.upper_bound(addr);
     if (pos != m_L1_cache.begin()) {
-      --pos;
+      // If we are not in the beginning, the previous range might be
+      // intersecting.
+      BlockMap::iterator previous = pos;
+      previous--;
+      AddrRange chunk_range(previous->first, previous->second->GetByteSize());
+      if (chunk_range.DoesIntersect(flush_range))
+          m_L1_cache.erase(previous);
     }
     while (pos != m_L1_cache.end()) {
       AddrRange chunk_range(pos->first, pos->second->GetByteSize());

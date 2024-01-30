@@ -244,8 +244,8 @@ void RegisterContextUnwind::InitializeZerothFrame() {
 
   if (m_full_unwind_plan_sp &&
       m_full_unwind_plan_sp->PlanValidAtAddress(m_current_pc)) {
-    active_row =
-        m_full_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset);
+    active_row = m_full_unwind_plan_sp->GetRowForFunctionOffset(
+        m_current_offset, m_start_pc);
     row_register_kind = m_full_unwind_plan_sp->GetRegisterKind();
     if (active_row.get() && log) {
       StreamString active_row_strm;
@@ -621,8 +621,8 @@ void RegisterContextUnwind::InitializeNonZerothFrame() {
 
   if (m_fast_unwind_plan_sp &&
       m_fast_unwind_plan_sp->PlanValidAtAddress(m_current_pc)) {
-    active_row =
-        m_fast_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset);
+    active_row = m_fast_unwind_plan_sp->GetRowForFunctionOffset(
+        m_current_offset, m_start_pc);
     row_register_kind = m_fast_unwind_plan_sp->GetRegisterKind();
     PropagateTrapHandlerFlagFromUnwindPlan(m_fast_unwind_plan_sp);
     if (active_row.get() && log) {
@@ -637,7 +637,8 @@ void RegisterContextUnwind::InitializeNonZerothFrame() {
     m_full_unwind_plan_sp = GetFullUnwindPlanForFrame();
     int valid_offset = -1;
     if (IsUnwindPlanValidForCurrentPC(m_full_unwind_plan_sp, valid_offset)) {
-      active_row = m_full_unwind_plan_sp->GetRowForFunctionOffset(valid_offset);
+      active_row = m_full_unwind_plan_sp->GetRowForFunctionOffset(valid_offset,
+                                                                  m_start_pc);
       row_register_kind = m_full_unwind_plan_sp->GetRegisterKind();
       PropagateTrapHandlerFlagFromUnwindPlan(m_full_unwind_plan_sp);
       if (active_row.get() && log) {
@@ -1271,7 +1272,8 @@ RegisterContextUnwind::SavedLocationForRegister(
 
   if (m_fast_unwind_plan_sp) {
     UnwindPlan::RowSP active_row =
-        m_fast_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset);
+        m_fast_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset,
+                                                       m_start_pc);
     unwindplan_registerkind = m_fast_unwind_plan_sp->GetRegisterKind();
     if (regnum.GetAsKind(unwindplan_registerkind) == LLDB_INVALID_REGNUM) {
       UnwindLogMsg("could not convert lldb regnum %s (%d) into %d RegisterKind "
@@ -1312,7 +1314,8 @@ RegisterContextUnwind::SavedLocationForRegister(
                                LLDB_REGNUM_GENERIC_PC);
 
       UnwindPlan::RowSP active_row =
-          m_full_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset);
+          m_full_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset,
+                                                         m_start_pc);
       unwindplan_registerkind = m_full_unwind_plan_sp->GetRegisterKind();
 
       if (got_new_full_unwindplan && active_row.get() && log) {
@@ -1440,7 +1443,8 @@ RegisterContextUnwind::SavedLocationForRegister(
           // Update for the possibly new unwind plan
           unwindplan_registerkind = m_full_unwind_plan_sp->GetRegisterKind();
           UnwindPlan::RowSP active_row =
-              m_full_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset);
+              m_full_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset,
+                                                             m_start_pc);
 
           // Sanity check: Verify that we can fetch a pc value and CFA value
           // with this unwind plan
@@ -1769,7 +1773,8 @@ bool RegisterContextUnwind::TryFallbackUnwindPlan() {
   m_full_unwind_plan_sp = m_fallback_unwind_plan_sp;
 
   UnwindPlan::RowSP active_row =
-      m_fallback_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset);
+      m_fallback_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset,
+                                                         m_start_pc);
 
   if (active_row &&
       active_row->GetCFAValue().GetValueType() !=
@@ -1854,7 +1859,8 @@ bool RegisterContextUnwind::ForceSwitchToFallbackUnwindPlan() {
   }
 
   UnwindPlan::RowSP active_row =
-      m_fallback_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset);
+      m_fallback_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset,
+                                                         m_start_pc);
 
   if (active_row &&
       active_row->GetCFAValue().GetValueType() !=

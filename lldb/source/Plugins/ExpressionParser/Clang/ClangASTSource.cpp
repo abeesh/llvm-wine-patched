@@ -382,6 +382,67 @@ clang::ObjCInterfaceDecl *ClangASTSource::GetCompleteObjCInterface(
   return complete_iface_decl;
 }
 
+namespace {
+
+std::string
+GetNameForClassTemplateSpecialization(ClassTemplateDecl *class_template,
+                                      ArrayRef<TemplateArgument> args) {
+  clang::LangOptions lang_options;
+  lang_options.CPlusPlus = true;
+  lang_options.Bool = true;
+  PrintingPolicy policy(lang_options);
+
+  std::string name;
+  llvm::raw_string_ostream os(name);
+  class_template->printQualifiedName(os, policy);
+  printTemplateArgumentList(os, args, policy);
+  return os.str();
+}
+
+} // namespace
+
+bool ClangASTSource::FindClassTemplateSpecialization(
+    ClassTemplateDecl *class_template, ArrayRef<TemplateArgument> args) {
+  if (!m_target->GetInferClassTemplates())
+    return false;
+
+  Log *log(lldb_private::GetLogIfAllCategoriesSet(LIBLLDB_LOG_EXPRESSIONS));
+  static unsigned int invocation_id = 0;
+  unsigned int current_id = invocation_id++;
+
+  const ConstString name(
+      GetNameForClassTemplateSpecialization(class_template, args));
+
+  LLDB_LOG(
+      log,
+      "    FindClassTemplateSpecialization[{0}] on (ASTContext*){1} Completing "
+      "(ClassTemplateDecl*){2}, searching for {3}",
+      current_id, static_cast<void *>(m_ast_context),
+      static_cast<void *>(class_template), name.GetCString());
+
+  LLDB_LOG(log, "      FCTS[{0}] Before:", current_id);
+
+  TypeList types;
+  llvm::DenseSet<lldb_private::SymbolFile *> searched_symbol_files;
+  m_target->GetImages().FindTypes(nullptr, name, true, UINT32_MAX,
+                                  searched_symbol_files, types);
+
+  size_t num_types = types.GetSize();
+  for (size_t ti = 0; ti < num_types; ++ti) {
+    lldb::TypeSP type_sp = types.GetTypeAtIndex(ti);
+    if (type_sp->GetQualifiedName() != name)
+      continue;
+    CompilerType full_type = type_sp->GetFullCompilerType();
+    if (GuardedCopyType(full_type)) {
+      LLDB_LOG(log, "      FCTS[{0}] Specialization inserted.", current_id);
+      return true;
+    }
+  }
+
+  LLDB_LOG(log, "      FCTS[{0}] Specialization not found.", current_id);
+  return false;
+}
+
 void ClangASTSource::FindExternalLexicalDecls(
     const DeclContext *decl_context,
     llvm::function_ref<bool(Decl::Kind)> predicate,
@@ -615,12 +676,15 @@ void ClangASTSource::FindExternalVisibleDecls(
 
   TypeList types;
   const bool exact_match = true;
+  const bool include_templates = m_target->GetInferClassTemplates();
   llvm::DenseSet<lldb_private::SymbolFile *> searched_symbol_files;
   if (module_sp && namespace_decl)
-    module_sp->FindTypesInNamespace(name, namespace_decl, 1, types);
+    module_sp->FindTypesInNamespace(name, namespace_decl, 1, types,
+                                    include_templates);
   else {
     m_target->GetImages().FindTypes(module_sp.get(), name, exact_match, 1,
-                                    searched_symbol_files, types);
+                                    searched_symbol_files, types,
+                                    include_templates);
   }
 
   if (size_t num_types = types.GetSize()) {

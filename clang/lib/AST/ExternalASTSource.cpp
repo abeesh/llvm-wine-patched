@@ -14,6 +14,7 @@
 
 #include "clang/AST/ExternalASTSource.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/DeclTemplate.h"
 #include "clang/AST/DeclarationName.h"
 #include "clang/Basic/FileManager.h"
 #include "clang/Basic/IdentifierTable.h"
@@ -49,6 +50,11 @@ void ExternalASTSource::CompleteRedeclChain(const Decl *D) {}
 void ExternalASTSource::CompleteType(TagDecl *Tag) {}
 
 void ExternalASTSource::CompleteType(ObjCInterfaceDecl *Class) {}
+
+bool ExternalASTSource::FindClassTemplateSpecialization(
+    ClassTemplateDecl *ClassTemplate, ArrayRef<TemplateArgument> Args) {
+  return false;
+}
 
 void ExternalASTSource::ReadComments() {}
 

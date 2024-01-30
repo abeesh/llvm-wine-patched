@@ -130,6 +130,41 @@ class ChangeValueAPITestCase(TestBase):
         self.assertEquals(actual_value, 98765,
                         "Got the right changed value from ptr->second_val")
 
+        # Test updating the children after updating the parent value.
+        def test_update_parent_value(parent):
+            self.assertEquals(
+                parent.GetValue(),
+                frame0.FindVariable("b1").GetValue())
+            self.assertEquals(parent.GetChildAtIndex(0).GetValue(), "1")
+
+            result = parent.SetValueFromCString(
+                frame0.FindVariable("b2").GetValue())
+            self.assertTrue(result, "Success setting {}".format(parent.name))
+            self.assertEquals(
+                parent.GetValue(),
+                frame0.FindVariable("b2").GetValue())
+            self.assertEquals(parent.GetChildAtIndex(0).GetValue(), "2")
+
+        # Test for value returned by SBFrame::EvaluateExpression.
+        test_update_parent_value(
+            frame0.EvaluateExpression("auto $b_0 = b1; $b_0"))
+
+        # Test for value _created_ by SBFrame::EvaluateExpression.
+        frame0.EvaluateExpression("auto $b_0 = b1")
+        test_update_parent_value(
+            frame0.FindValue('$b_0', lldb.eValueTypeConstResult))
+
+        # Test for value created by SBTarget::CreateValueFromData.
+        b1 = frame0.FindVariable("b1")
+        b1_size = b1.GetByteSize()
+        b1_value = b1.GetValueAsUnsigned()
+        b1_addr_bytes = b1_value.to_bytes(b1_size, 'little')
+        error = lldb.SBError()
+        data = lldb.SBData()
+        data.SetData(error, b1_addr_bytes, lldb.eByteOrderLittle, b1_size)
+        test_update_parent_value(
+            target.CreateValueFromData("b", data, b1.GetType()))
+
         # gcc may set multiple locations for breakpoint
         breakpoint.SetEnabled(False)
 

@@ -1,3 +1,11 @@
+lldb_tablegen(ProcessElfCoreProperties.inc -gen-lldb-property-defs
+  SOURCE ProcessElfCoreProperties.td
+  TARGET LLDBPluginProcessElfCorePropertiesGen)
+
+lldb_tablegen(ProcessElfCorePropertiesEnum.inc -gen-lldb-property-enum-defs
+  SOURCE ProcessElfCoreProperties.td
+  TARGET LLDBPluginProcessElfCorePropertiesEnumGen)
+
 add_lldb_library(lldbPluginProcessElfCore PLUGIN
   ProcessElfCore.cpp
   ThreadElfCore.cpp
@@ -20,3 +28,7 @@ add_lldb_library(lldbPluginProcessElfCore PLUGIN
     BinaryFormat
     Support
   )
+
+add_dependencies(lldbPluginProcessElfCore
+  LLDBPluginProcessElfCorePropertiesGen
+  LLDBPluginProcessElfCorePropertiesEnumGen)

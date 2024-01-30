@@ -9466,6 +9466,14 @@ std::vector<CompilerDecl> TypeSystemClang::DeclContextFindDeclByName(
                   found_decls.push_back(GetCompilerDecl(nd));
               }
             }
+          } else if (clang::EnumDecl *ed =
+                         llvm::dyn_cast<clang::EnumDecl>(child)) {
+            for (clang::EnumConstantDecl *ecd : ed->enumerators()) {
+              IdentifierInfo *ii = ecd->getIdentifier();
+              if (ii != nullptr &&
+                  ii->getName().equals(name.AsCString(nullptr)))
+                found_decls.push_back(GetCompilerDecl(ecd));
+            }
           } else if (clang::NamedDecl *nd =
                          llvm::dyn_cast<clang::NamedDecl>(child)) {
             IdentifierInfo *ii = nd->getIdentifier();

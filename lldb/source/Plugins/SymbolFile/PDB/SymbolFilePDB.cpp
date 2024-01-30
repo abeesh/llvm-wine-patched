@@ -1427,7 +1427,7 @@ void SymbolFilePDB::FindTypes(
     lldb_private::ConstString name, const CompilerDeclContext &parent_decl_ctx,
     uint32_t max_matches,
     llvm::DenseSet<lldb_private::SymbolFile *> &searched_symbol_files,
-    lldb_private::TypeMap &types) {
+    lldb_private::TypeMap &types, bool include_templates) {
   std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
   if (!name)
     return;
